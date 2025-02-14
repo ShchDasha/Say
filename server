@@ -1,0 +1,76 @@
+#include <iostream>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <vector>
+
+#pragma comment(lib, "ws2_32.lib")
+
+#define PORT "8080" 
+#define BUFFER_SIZE 1024 
+
+void handleError(const char* message) {
+    std::cerr << "Error: " << message << " code: " << WSAGetLastError() << std::endl;
+    exit(EXIT_FAILURE);
+}
+
+int main() {
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        handleError("Winsock initialisation error");
+    }
+
+    struct addrinfo hints = {}, *res;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags = AI_PASSIVE;
+
+    if (getaddrinfo(NULL, PORT, &hints, &res) != 0) {
+        handleError("Error getaddrinfo");
+    }
+
+    SOCKET serverSocket = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (serverSocket == INVALID_SOCKET) {
+        handleError("Error creating a socket");
+    }
+
+    if (bind(serverSocket, res->ai_addr, (int)res->ai_addrlen) == SOCKET_ERROR) {
+        handleError("Socket binding error");
+    }
+    freeaddrinfo(res);
+
+    if (listen(serverSocket, 2) == SOCKET_ERROR) {
+        handleError("Listening error");
+    }
+
+    std::cout << "Waiting for two clients to connect..." << std::endl;
+
+    std::vector<SOCKET> clients;
+    while (clients.size() < 2) {
+        SOCKET clientSocket = accept(serverSocket, NULL, NULL);
+        if (clientSocket == INVALID_SOCKET) {
+            handleError("Client connection error");
+        }
+        clients.push_back(clientSocket);
+        std::cout << "Client Connected. Total connected: " << clients.size() << "\n";
+    }
+
+    std::cout << "Both clients are connected. Start exchanging messages." << std::endl;
+
+    char buffer[BUFFER_SIZE];
+    int receivedBytes;
+    while (true) {
+        for (int i = 0; i < 2; i++) {
+            receivedBytes = recv(clients[i], buffer, BUFFER_SIZE, 0);
+            if (receivedBytes <= 0) break;
+            send(clients[1 - i], buffer, receivedBytes, 0);
+        }
+    }
+
+    for (SOCKET s : clients) {
+        closesocket(s);
+    }
+    closesocket(serverSocket);
+    WSACleanup();
+    return 0;
+}
