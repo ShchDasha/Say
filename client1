@@ -1,0 +1,74 @@
+#include <iostream>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <string>
+
+#pragma comment(lib, "ws2_32.lib")
+
+#define SERVER_IP "127.0.0.1" 
+#define PORT "8080"
+#define BUFFER_SIZE 1024
+
+std::string xorEncryptDecrypt(const std::string& message, char key) {
+    std::string result = message;
+    for (char& c : result) {
+        c ^= key;
+    }
+    return result;
+}
+
+void handleError(const char* message) {
+    std::cerr << "Error: " << message << " code: " << WSAGetLastError() << std::endl;
+    exit(EXIT_FAILURE);
+}
+
+int main() {
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        handleError("Winsock initialisation error");
+    }
+
+    struct addrinfo hints = {}, *res;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    if (getaddrinfo(SERVER_IP, PORT, &hints, &res) != 0) {
+        handleError("Error getaddrinfo");
+    }
+
+    SOCKET clientSocket = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (clientSocket == INVALID_SOCKET) {
+        handleError("Error creating a socket");
+    }
+
+    if (connect(clientSocket, res->ai_addr, (int)res->ai_addrlen) == SOCKET_ERROR) {
+        handleError("Server connection error");
+    }
+    freeaddrinfo(res);
+
+    std::cout << "Connected to the server. Enter the encryption key (one character): ";
+    char key;
+    std::cin >> key;
+    std::cin.ignore();
+
+    char buffer[BUFFER_SIZE];
+    while (true) {
+        std::string message;
+        std::cout << "Enter a message: ";
+        std::getline(std::cin, message);
+        
+        std::string encryptedMessage = xorEncryptDecrypt(message, key);
+        send(clientSocket, encryptedMessage.c_str(), encryptedMessage.size(), 0);
+        
+        int receivedBytes = recv(clientSocket, buffer, BUFFER_SIZE, 0);
+        if (receivedBytes <= 0) break;
+        
+        std::string decryptedMessage = xorEncryptDecrypt(std::string(buffer, receivedBytes), key);
+        std::cout << "Message received: " << decryptedMessage << "\n";
+    }
+
+    closesocket(clientSocket);
+    WSACleanup();
+    return 0;
+}
