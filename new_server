@@ -1,0 +1,89 @@
+#include <iostream>
+#include <vector>
+#include <thread>
+#include <mutex>
+#include <algorithm>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+std::mutex clientsMutex;
+std::vector<SOCKET> clients;
+void handleClient(SOCKET clientSocket)
+{
+    char buffer[1024];    
+    while (true)
+    {
+        int bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0);
+        if (bytesReceived <= 0)
+        {
+            std::cerr << "Client disconnected or error occurred." << std::endl;
+            break;
+        }
+        std::cout << "Encrypted message received (" << bytesReceived << " bytes)" << std::endl;
+        std::lock_guard<std::mutex> lock(clientsMutex);
+        for (auto& client : clients)
+        {
+            if (client != clientSocket) send(client, buffer, bytesReceived, 0);
+        }
+    }
+    std::lock_guard<std::mutex> lock(clientsMutex);
+    clients.erase(std::remove(clients.begin(), clients.end(), clientSocket), clients.end());
+    closesocket(clientSocket);
+}
+int main()
+{
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+    {
+        std::cerr << "WSAStartup failed." << std::endl;
+        return 1;
+    }
+    SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverSocket == INVALID_SOCKET)
+    {
+        std::cerr << "Socket creation failed." << std::endl;
+        WSACleanup();
+        return 1;
+    }
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(12345);
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
+    {
+        std::cerr << "Bind failed." << std::endl;
+        closesocket(serverSocket);
+        WSACleanup();
+        return 1;
+    }
+    if (listen(serverSocket, 2) == SOCKET_ERROR)
+    {
+        std::cerr << "Listen failed." << std::endl;
+        closesocket(serverSocket);
+        WSACleanup();
+        return 1;
+    }
+    std::cout << "Server started. Waiting for 2 clients..." << std::endl;
+    while (clients.size() < 2)
+    {
+        SOCKET clientSocket = accept(serverSocket, nullptr, nullptr);
+        if (clientSocket == INVALID_SOCKET)
+        {
+            std::cerr << "Accept failed." << std::endl;
+            continue;
+        }
+        
+        {
+            std::lock_guard<std::mutex> lock(clientsMutex);
+            clients.push_back(clientSocket);
+        }
+        std::cout << "Client connected (" << clients.size() << "/2)" << std::endl;
+        std::thread(handleClient, clientSocket).detach();
+    }
+    std::cout << "Maximum clients reached. Server is now managing chat between 2 clients." << std::endl;
+    while (true)
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    closesocket(serverSocket);
+    WSACleanup();
+    return 0;
+}
